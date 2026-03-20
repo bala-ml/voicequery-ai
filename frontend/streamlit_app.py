@@ -1,191 +1,161 @@
 import sys
 import os
 
+# ================= PROJECT ROOT =================
 PROJECT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")
 )
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
+
+# ================= LOAD .env =================
+from dotenv import load_dotenv
+
+ENV_PATH = os.path.join(PROJECT_ROOT, "config", ".env")
+load_dotenv(ENV_PATH)
+
+
+# ================= IMPORTS =================
 import streamlit as st
 import pandas as pd
-import speech_recognition as sr
+from streamlit_mic_recorder import mic_recorder
 from gtts import gTTS
-import tempfile
 import base64
+import tempfile
+import io
+from groq import Groq
 
 from app.ai.text_to_sql import generate_sql
 from app.db.run_query import execute_sql
 
 
-# Page Config
+# ================= API KEY =================
+api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
+client = Groq(api_key=api_key)
+
+
+# ================= PAGE CONFIG =================
 st.set_page_config(page_title="VoiceQuery AI", layout="wide")
-
-st.markdown("""
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-
-<style>
-* {
-    font-family: 'Poppins', sans-serif !important;
-}
-.bottom-bar {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: white;
-    padding: 10px 20px;
-    border-top: 1px solid #ddd;
-    z-index: 9999;
-}
-.main-content {
-    padding-bottom: 90px;
-}
-div.stButton > button {
-    height: 56px;
-    width: 100%;
-    border-radius: 10px;
-    font-size: 16px;
-}
-.sidebar-field {
-   font-size: 12px;    
-    font-weight: 500;         
-    white-space: nowrap;      
-    overflow: hidden;
-    text-overflow: ellipsis;  
-    margin-bottom: 10px;      
-}
-</style>
-""", unsafe_allow_html=True)
-
-DATA_PATH = os.path.join(PROJECT_ROOT, "data", "retail_data.csv")
-
-df = pd.read_csv(DATA_PATH)
-
-st.sidebar.title("VoiceQuery AI")
-st.sidebar.header("📊 Dataset Info")
-
-st.sidebar.subheader("Available Fields")
-
-col1, col2 = st.sidebar.columns(2)
-
-col1, col2 = st.sidebar.columns(2)
-
-for i, col in enumerate(df.columns):
-
-    display_name = col.replace("_", " ")
-    field_html = f"""
-    <div class="sidebar-field" title="{col}">
-        <b>{display_name}</b>
-    </div>
-    """
-
-    if i % 2 == 0:
-        col1.markdown(field_html, unsafe_allow_html=True)
-    else:
-        col2.markdown(field_html, unsafe_allow_html=True)
 
 st.title("VoiceQuery AI — Smart Analytics Assistant")
 
-# Display user query under title
-query_area = st.container()
 
-# Output Area
+# ================= LOAD DATA =================
+DATA_PATH = os.path.join(PROJECT_ROOT, "data", "retail_data.csv")
+df = pd.read_csv(DATA_PATH)
+
+query_area = st.container()
 output_area = st.container()
 
-# Text to Speech
+
+# ============================================================
+# 🔊 TEXT TO SPEECH
+# ============================================================
 def speak(text):
     tts = gTTS(text)
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    tts.save(temp_file.name)
+    buf = io.BytesIO()
+    tts.write_to_fp(buf)
 
-    audio_bytes = open(temp_file.name, "rb").read()
-    b64 = base64.b64encode(audio_bytes).decode()
+    b64 = base64.b64encode(buf.getvalue()).decode()
 
-    audio_html = f"""
-        <audio autoplay>
-        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-        </audio>
-    """
-
-    st.markdown(audio_html, unsafe_allow_html=True)
+    st.markdown(f"""
+    <audio autoplay>
+      <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+    </audio>
+    """, unsafe_allow_html=True)
 
 
-# Voice Input
-def listen_from_mic():
-    recognizer = sr.Recognizer()
-
-    with sr.Microphone() as source:
-        with st.spinner("🎧 Listening..."):
-            audio = recognizer.listen(source)
-
-    try:
-        text = recognizer.recognize_google(audio)
-        return text
-    except:
-        return None
-
-
-# Process Query
+# ============================================================
+# 🚀 PROCESS QUERY
+# ============================================================
 def process_query(query):
 
     with query_area:
-        st.info(f"**_You Said:_** {query.title()}")
+        st.info(f"**You Said:** {query}")
 
-    # AI → SQL
+    # ---- AI → SQL ----
     sql_query = generate_sql(query)
 
-    # Execute SQL
+    # ---- Execute SQL ----
     results = execute_sql(sql_query)
 
     with output_area:
 
-        st.markdown("### **_Answer_**")
-
-        st.markdown("#### **_Generated SQL:_**")
+        st.markdown("### Answer")
+        st.markdown("#### Generated SQL")
         st.code(sql_query, language="sql")
 
         if isinstance(results, str):
             st.error(results)
             answer = "Error executing query."
         else:
-            df = pd.DataFrame(results)
+            df_res = pd.DataFrame(results)
+            st.dataframe(df_res)
 
-            st.dataframe(df)
-
-            top_items = ", ".join(df.iloc[:5, 0].astype(str))
+            top_items = ", ".join(df_res.iloc[:5, 0].astype(str))
             answer = f"Here’s what I found: {top_items}"
 
         st.success(answer)
 
     speak(answer)
 
-st.markdown('<div class="bottom-bar">', unsafe_allow_html=True)
 
-col1, col2 = st.columns([8, 2])
+# ============================================================
+# 🧾 INPUT BAR — LINEAR LAYOUT
+# ============================================================
 
-with col1:
-    text_query = st.chat_input("Ask anything about your data...")
+col_text, col_voice = st.columns([8, 2])
 
-with col2:
-    mic_clicked = st.button(
-        "Ask Your Question",
-        use_container_width=True
+
+# ---------- LEFT: TEXT INPUT ----------
+with col_text:
+    manual_query = st.chat_input("Ask anything about your data...")
+
+
+# ---------- RIGHT: VOICE BUTTON ----------
+with col_voice:
+    audio = mic_recorder(
+        start_prompt="🎤 Ask Your Question",
+        stop_prompt="⏹️ Stop",
+        just_once=True,
+        use_container_width=True,
+        key="voice"
     )
 
-st.markdown('</div>', unsafe_allow_html=True)
 
-# Voice Btn
-if mic_clicked:
-    voice_query = listen_from_mic()
+# ============================================================
+# ⌨️ MANUAL INPUT PROCESS (ENTER KEY)
+# ============================================================
 
-    if voice_query:
+if manual_query:
+    process_query(manual_query)
+
+
+# ============================================================
+# 🎤 VOICE INPUT PROCESS
+# ============================================================
+
+if audio:
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as f:
+        f.write(audio["bytes"])
+        audio_path = f.name
+
+    try:
+        with open(audio_path, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=file,
+                model="whisper-large-v3"
+            )
+
+        voice_query = transcription.text
+
+        # Show spoken text
+        st.info(f"**You Said:** {voice_query}")
+
         process_query(voice_query)
-    else:
-        st.error("Could not understand audio.")
 
-
-# Text Input
-if text_query:
-    process_query(text_query)
+    except Exception as e:
+        st.error(f"Speech recognition failed: {e}")
