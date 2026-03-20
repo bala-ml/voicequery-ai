@@ -1,0 +1,191 @@
+import sys
+import os
+
+PROJECT_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")
+)
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+import streamlit as st
+import pandas as pd
+import speech_recognition as sr
+from gtts import gTTS
+import tempfile
+import base64
+
+from app.ai.text_to_sql import generate_sql
+from app.db.run_query import execute_sql
+
+
+# Page Config
+st.set_page_config(page_title="VoiceQuery AI", layout="wide")
+
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+* {
+    font-family: 'Poppins', sans-serif !important;
+}
+.bottom-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    padding: 10px 20px;
+    border-top: 1px solid #ddd;
+    z-index: 9999;
+}
+.main-content {
+    padding-bottom: 90px;
+}
+div.stButton > button {
+    height: 56px;
+    width: 100%;
+    border-radius: 10px;
+    font-size: 16px;
+}
+.sidebar-field {
+   font-size: 12px;    
+    font-weight: 500;         
+    white-space: nowrap;      
+    overflow: hidden;
+    text-overflow: ellipsis;  
+    margin-bottom: 10px;      
+}
+</style>
+""", unsafe_allow_html=True)
+
+DATA_PATH = os.path.join(PROJECT_ROOT, "data", "retail_data.csv")
+
+df = pd.read_csv(DATA_PATH)
+
+st.sidebar.title("VoiceQuery AI")
+st.sidebar.header("📊 Dataset Info")
+
+st.sidebar.subheader("Available Fields")
+
+col1, col2 = st.sidebar.columns(2)
+
+col1, col2 = st.sidebar.columns(2)
+
+for i, col in enumerate(df.columns):
+
+    display_name = col.replace("_", " ")
+    field_html = f"""
+    <div class="sidebar-field" title="{col}">
+        <b>{display_name}</b>
+    </div>
+    """
+
+    if i % 2 == 0:
+        col1.markdown(field_html, unsafe_allow_html=True)
+    else:
+        col2.markdown(field_html, unsafe_allow_html=True)
+
+st.title("VoiceQuery AI — Smart Analytics Assistant")
+
+# Display user query under title
+query_area = st.container()
+
+# Output Area
+output_area = st.container()
+
+# Text to Speech
+def speak(text):
+    tts = gTTS(text)
+
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(temp_file.name)
+
+    audio_bytes = open(temp_file.name, "rb").read()
+    b64 = base64.b64encode(audio_bytes).decode()
+
+    audio_html = f"""
+        <audio autoplay>
+        <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+    """
+
+    st.markdown(audio_html, unsafe_allow_html=True)
+
+
+# Voice Input
+def listen_from_mic():
+    recognizer = sr.Recognizer()
+
+    with sr.Microphone() as source:
+        with st.spinner("🎧 Listening..."):
+            audio = recognizer.listen(source)
+
+    try:
+        text = recognizer.recognize_google(audio)
+        return text
+    except:
+        return None
+
+
+# Process Query
+def process_query(query):
+
+    with query_area:
+        st.info(f"**_You Said:_** {query.title()}")
+
+    # AI → SQL
+    sql_query = generate_sql(query)
+
+    # Execute SQL
+    results = execute_sql(sql_query)
+
+    with output_area:
+
+        st.markdown("### **_Answer_**")
+
+        st.markdown("#### **_Generated SQL:_**")
+        st.code(sql_query, language="sql")
+
+        if isinstance(results, str):
+            st.error(results)
+            answer = "Error executing query."
+        else:
+            df = pd.DataFrame(results)
+
+            st.dataframe(df)
+
+            top_items = ", ".join(df.iloc[:5, 0].astype(str))
+            answer = f"Here’s what I found: {top_items}"
+
+        st.success(answer)
+
+    speak(answer)
+
+st.markdown('<div class="bottom-bar">', unsafe_allow_html=True)
+
+col1, col2 = st.columns([8, 2])
+
+with col1:
+    text_query = st.chat_input("Ask anything about your data...")
+
+with col2:
+    mic_clicked = st.button(
+        "Ask Your Question",
+        use_container_width=True
+    )
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# Voice Btn
+if mic_clicked:
+    voice_query = listen_from_mic()
+
+    if voice_query:
+        process_query(voice_query)
+    else:
+        st.error("Could not understand audio.")
+
+
+# Text Input
+if text_query:
+    process_query(text_query)
