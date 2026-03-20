@@ -1,9 +1,9 @@
 pandas==2.3.3
 SpeechRecognition==3.15.1
-# pyttsx3==2.99
+# pyttsx3==2.99 - install it for local development
 groq==1.1.1
 python-dotenv==1.2.2
-# PyAudio==0.2.14
+# PyAudio==0.2.14 install it for local development
 streamlit==1.55.0
 streamlit-mic-recorder==0.0.8
 requests==2.32.5
